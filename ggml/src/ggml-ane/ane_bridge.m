@@ -224,15 +224,21 @@ bool ane_bridge_eval(ANEKernelHandle *kernel) {
     @autoreleasepool {
         if (!kernel || !kernel->model) return false;
         NSError *e = nil;
-        return ((BOOL(*)(id,SEL,unsigned int,id,id,NSError**))objc_msgSend)(
+        BOOL ok = ((BOOL(*)(id,SEL,unsigned int,id,id,NSError**))objc_msgSend)(
             kernel->model, @selector(evaluateWithQoS:options:request:error:),
             21, @{}, kernel->request, &e);
+        if (!ok && e) {
+            NSLog(@"ANE eval failed: %@", e);
+        }
+        return ok;
     }
 }
 
 void ane_bridge_write_input(ANEKernelHandle *kernel, int idx,
                              const void *data, size_t bytes) {
     if (!kernel || idx < 0 || idx >= kernel->nInputs) return;
+    size_t capacity = kernel->inputBytes[idx];
+    if (bytes > capacity) bytes = capacity;
     IOSurfaceLock(kernel->ioInputs[idx], 0, NULL);
     memcpy(IOSurfaceGetBaseAddress(kernel->ioInputs[idx]), data, bytes);
     IOSurfaceUnlock(kernel->ioInputs[idx], 0, NULL);
@@ -241,6 +247,8 @@ void ane_bridge_write_input(ANEKernelHandle *kernel, int idx,
 void ane_bridge_read_output(ANEKernelHandle *kernel, int idx,
                               void *data, size_t bytes) {
     if (!kernel || idx < 0 || idx >= kernel->nOutputs) return;
+    size_t capacity = kernel->outputBytes[idx];
+    if (bytes > capacity) bytes = capacity;
     IOSurfaceLock(kernel->ioOutputs[idx], kIOSurfaceLockReadOnly, NULL);
     memcpy(data, IOSurfaceGetBaseAddress(kernel->ioOutputs[idx]), bytes);
     IOSurfaceUnlock(kernel->ioOutputs[idx], kIOSurfaceLockReadOnly, NULL);
