@@ -21,7 +21,7 @@ static std::string gen_matmul_mil(int M, int K, int N) {
     // Input: ggml row-major [K,N] = N*K fp16 values
     // Interpret as [1, N, 1, K] then transpose to [1, K, 1, N] for conv
     // After conv [1, M, 1, N], transpose back to [1, N, 1, M] for ggml output
-    char buf[4096];
+    char buf[8192];
     snprintf(buf, sizeof(buf),
         "program(1.3)\n"
         "[buildInfo = dict<string, string>({"
@@ -70,15 +70,9 @@ static void fp32_to_fp16(const float * src, uint16_t * dst, int n) {
 
 static void fp16_to_fp32(const uint16_t * src, float * dst, int n) {
     for (int i = 0; i < n; i++) {
-        uint16_t h = src[i];
-        uint32_t sign = (h & 0x8000) << 16;
-        uint32_t exponent = (h >> 10) & 0x1F;
-        uint32_t frac = h & 0x3FF;
-        uint32_t bits;
-        if (exponent == 0) bits = sign;
-        else if (exponent == 31) bits = sign | 0x7F800000 | (frac << 13);
-        else bits = sign | ((exponent - 15 + 127) << 23) | (frac << 13);
-        memcpy(&dst[i], &bits, 4);
+        _Float16 h;
+        memcpy(&h, &src[i], 2);
+        dst[i] = (float)h;
     }
 }
 
@@ -144,7 +138,8 @@ static enum ggml_status ggml_backend_ane_graph_compute(ggml_backend_t backend, s
         int N = (int)src1->ne[1];
 
         if (src0->ne[2] != 1 || src0->ne[3] != 1 || src1->ne[2] != 1 || src1->ne[3] != 1) continue;
-        if (M > 16384 || K > 16384 || N > 16384 || N < 1) continue;
+        // Match supports_op: M,K,N >= 64 and <= 16384
+        if (M < 64 || K < 64 || N < 64 || M > 16384 || K > 16384 || N > 16384) continue;
 
         n_attempted++;
 
@@ -193,8 +188,16 @@ static enum ggml_status ggml_backend_ane_graph_compute(ggml_backend_t backend, s
                                          1, &in_size, 1, &out_size);
             if (kernel) {
                 std::lock_guard<std::mutex> lock(ctx->cache_mutex);
-                ctx->cache[key] = kernel;
-                ctx->compile_count++;
+                // Double-check: another thread may have compiled the same key
+                auto it2 = ctx->cache.find(key);
+                if (it2 != ctx->cache.end()) {
+                    // Lost the race — free our duplicate and use theirs
+                    ane_bridge_free(kernel);
+                    kernel = it2->second;
+                } else {
+                    ctx->cache[key] = kernel;
+                    ctx->compile_count++;
+                }
             }
         }
 

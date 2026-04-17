@@ -77,9 +77,6 @@ uint8_t *ane_bridge_build_weight_blob(const float *src, int rows, int cols,
 uint8_t *ane_bridge_build_weight_blob_transposed(const float *src, int rows, int cols,
                                                    size_t *out_len);
 
-// Free a blob allocated by ane_bridge_build_weight_blob*
-void ane_bridge_free_blob(void *ptr);
-
 #ifdef __cplusplus
 }
 #endif
